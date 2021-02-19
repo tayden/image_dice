@@ -1,0 +1,13 @@
+[package]
+name = "img_dice"
+version = "0.1.0"
+authors = ["Taylor Denouden <taylordenouden@gmail.com>"]
+edition = "2018"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[dependencies]
+structopt = "0.3.21"
+gdal = "0.7.2"
+shapefile = "0.2.2"
+threadpool = "1.8.1"
