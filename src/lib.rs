@@ -1,65 +1,25 @@
 use std::cmp::{max, min};
-use std::path::PathBuf;
-use std::sync::Arc;
 
 use gdal;
 use shapefile;
-use structopt::StructOpt;
-use threadpool::ThreadPool;
 
-#[derive(StructOpt, Debug)]
-#[structopt(name = "image_dice", version = "0.1.0", author = "Taylor Denouden", about = "Dice large .tif files using a lidar tile_index.shp file.")]
-pub struct Opt {
-    /// Path to GeoTiff to dice up
-    #[structopt(parse(from_os_str))]
-    img_path: PathBuf,
+pub mod config;
 
-    /// Path to the tile_index.shp
-    #[structopt(parse(from_os_str))]
-    tile_index: PathBuf,
 
-    /// Output directory to save the diced images
-    #[structopt(parse(from_os_str))]
-    out_dir: PathBuf,
+pub fn run(config: config::Opt) {
+    // Open image with GDAL
+    let img = gdal::Dataset::open(&config.img_path).unwrap();
 
-    /// The number of threads to use for processing
-    #[structopt(short = "n", long, default_value = "1")]
-    threads: usize,
-}
-
-impl Opt {
-    pub fn get_output_tile_path(&self, ll: &shapefile::PointZ) -> String {
-        let img_stub = self.img_path.file_stem().expect("Could not parse img file name stem");
-        let ext = self.img_path.extension().expect("Could not parse img extension");
-
-        format!("{outdir}/{img_stub}_{easting}_{northing}.{ext}",
-                outdir = self.out_dir.to_str().unwrap(),
-                img_stub = img_stub.to_str().unwrap(),
-                easting = ll.x.round(),
-                northing = ll.y.round(),
-                ext = ext.to_str().unwrap())
-    }
-}
-
-pub fn run(config: Opt) {
     // Open tile index with shapefile
     let tile_reader = shapefile::Reader::from_path(&config.tile_index)
         .unwrap();
 
-    let pool = ThreadPool::new(config.threads.clone());
-    let config = Arc::new(config);
     tile_reader.iter_shapes_as::<shapefile::PolygonZ>().for_each(|shape| {
-        let config = Arc::clone(&config);
-        match shape {
-            Ok(shape) => {
-                pool.execute(move || { crop_to_shape(shape, config); });
-                // crop_to_shape(shape, config);
-            }
-            Err(err) => panic!("Unexpected shape type: {}", err)
-        }
-    });
+        let shape = shape.expect("Unexpected shape type");
+        let output_path = config.get_output_tile_path(&shape.bbox().min);
 
-    pool.join();
+        crop_to_shape(&img, shape, &*output_path);
+    });
 }
 
 fn coord2idx(transform: &gdal::GeoTransform, x_coord: &f64, y_coord: &f64) -> (i32, i32) {
@@ -71,9 +31,18 @@ fn coord2idx(transform: &gdal::GeoTransform, x_coord: &f64, y_coord: &f64) -> (i
     (x_pos, y_pos)
 }
 
-fn crop_to_shape(shape: shapefile::PolygonZ, config: Arc<Opt>) {
-    let img = gdal::Dataset::open(&config.img_path).unwrap();
+// struct ImageWindow {
+//     ll: (i32, i32),
+//     ur: (i32, i32),
+//     img_dims: (i32, i32)
+// }
+//
+// impl ImageWindow {
+//     fn window(&self) {}
+//     fn window_size(&self) {}
+// }
 
+fn crop_to_shape(img: &gdal::Dataset, shape: shapefile::PolygonZ, output_path: &str) {
     // Get img shape
     let (img_x_max, img_y_max) = img.raster_size();
 
@@ -91,9 +60,6 @@ fn crop_to_shape(shape: shapefile::PolygonZ, config: Arc<Opt>) {
     let num_bands = img.raster_count();
     let window_size = (win_x_size as usize, win_y_size as usize);
     let window = (window.0 as isize, window.1 as isize);
-
-    // Create a copy of the raster with no data
-    let output_path = config.get_output_tile_path(&shape.bbox().min);
 
     // Create output dataset
     let out_dataset = img.driver().create(&output_path, win_x_size as isize, win_y_size as isize, num_bands).unwrap();
@@ -117,6 +83,9 @@ fn crop_to_shape(shape: shapefile::PolygonZ, config: Arc<Opt>) {
         let out_band = out_dataset.rasterband(band_i)
             .expect("Could not read band");
 
+        let img_no_data = band.no_data_value().unwrap();
+        out_band.set_no_data_value(img_no_data).unwrap();
+
         let buf = band.read_as::<f64>(window, window_size, window_size)
             .expect("Error buffering band data");
 
@@ -128,4 +97,5 @@ fn crop_to_shape(shape: shapefile::PolygonZ, config: Arc<Opt>) {
 }
 
 // TODO: Stop band 4 from being alpha channel
-// TODO: Multi-threading
+// TODO: Check for matching SRS
+// TODO: Separate cli logic to new module
