@@ -7,19 +7,48 @@ on:
       - 'v*' # Push events to matching v*, i.e. v1.0, v20.15.10
 jobs:
   build-binaries:
+    defaults:
+      run:
+        shell: bash -l {0}
+
     strategy:
       matrix:
-        os: [ windows-latest, ubuntu-latest ]
+        os: [ windows-latest ]
 
     runs-on: ${{ matrix.os }}
 
     steps:
       - uses: actions/checkout@v1
 
+      - name: Set up Python 3.8
+        uses: actions/setup-python@v2
+        with:
+          python-version: 3.8
+
+      - name: Install GDAL
+        run: |
+          if [ "${{ matrix.os }}" != "windows-latest" ]; then
+            ${CONDA}/bin/conda create -n gdal_env -c conda-forge gdal;
+            echo "GDAL_HOME=${CONDA}/envs/gdal_env" >> $GITHUB_ENV;
+          else
+            C:/Miniconda/condabin/conda.bat create -n gdal_env -c conda-forge gdal;
+            echo "GDAL_HOME=C:/Miniconda/envs/gdal_env/Library" >> $GITHUB_ENV;
+          fi
+
+      - name: Quick test
+        run: |
+          echo ${{ env.GDAL_HOME }};
+          ls -l ${{ env.GDAL_HOME }};
+
       - name: Run tests
+        env:
+          GDAL_HOME: ${{ env.GDAL_HOME }}
         run: cargo test --verbose
 
       - name: Build
+        env:
+          GDAL_HOME: ${{ env.GDAL_HOME }}
+          GDAL_STATIC: 1
         run: cargo build --verbose --release
 
       - name: Archive release artifacts
@@ -30,6 +59,7 @@ jobs:
             target/release
 
   create-release:
+    needs: build-binaries
     runs-on: ubuntu-latest
 
     steps:
