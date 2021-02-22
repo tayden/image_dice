@@ -1,0 +1,80 @@
+name: Create Release
+
+on:
+  push:
+    # Sequence of patterns matched against refs/tags
+    tags:
+      - 'v*' # Push events to matching v*, i.e. v1.0, v20.15.10
+jobs:
+  build-binaries:
+    strategy:
+      matrix:
+        os: [ windows-latest, ubuntu-latest ]
+
+    runs-on: ${{ matrix.os }}
+
+    steps:
+      - uses: actions/checkout@v1
+
+      - name: Run tests
+        run: cargo test --verbose
+
+      - name: Build
+        run: cargo build --verbose --release
+
+      - name: Archive release artifacts
+        uses: actions/upload-artifact@v2
+        with:
+          name: ${{ matrix.os }}/target
+          path: |
+            target/release
+
+  create-release:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v1
+      - name: Create release
+        id: create_release
+        uses: actions/create-release@v1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          tag_name: ${{ github.ref }}
+          release_name: Release ${{ github.ref }}
+          body: |
+            Changes in this Release
+            - First Change
+            - Second Change
+          draft: true
+          prerelease: false
+
+      - name: Download Windows artifacts
+        uses: actions/download-artifact@v2
+        with:
+          name: windows-latest/target
+
+      - name: Download Ubuntu artifacts
+        uses: actions/download-artifact@v2
+        with:
+          name: ubuntu-latest/target
+
+      - name: Upload Windows assets
+        uses: actions/upload-release-asset@v1.0.1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          upload_url: ${{ steps.create_release.outputs.upload_url }}
+          asset_path: windows-latest/target/release/img_dice.exe
+          asset_name: img-dice-${{ github.ref }}-win64.exe
+          asset_content_type: application/octet-stream
+
+      - name: Upload Ubuntu assets
+        uses: actions/upload-release-asset@v1.0.1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          upload_url: ${{ steps.create_release.outputs.upload_url }}
+          asset_path: ubuntu-latest/target/release/img_dice
+          asset_name: img-dice-${{ github.ref }}-ubuntu64.exe
+          asset_content_type: application/octet-stream
